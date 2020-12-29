@@ -4,8 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <math.h>
-#include <errno.h>
 
 #include <getopt.h>
 #include <netinet/in.h>
@@ -14,23 +12,25 @@
 #include <sys/types.h>
 
 #include "pthread.h"
-#include "factorial.h"
+#include "lib.h"
 
-int port = -1;
 
-struct FactorialArgs {
-  uint64_t begin;
-  uint64_t end;
-  uint64_t mod;
-};
+//gcc server.c -lpthread -o server.out && ./server.out --port 20001 --tnum 4
+
+//./server.out --port 20001 --tnum 1
+
 
 uint64_t Factorial(const struct FactorialArgs *args) {
-  uint64_t ans = 1;
-  uint64_t i;
-  for (i = (*args).begin; i < (*args).end; i++) 
-    ans *= i;
-  ans %= (*args).mod;
-  return ans;
+    int fac = 1;
+    // TODO: your code here
+    int i;
+    for ( i = args->begin; i <= args->end; i++)
+    {
+        fac*=i;
+        fac%=args->mod;
+        printf("factorial=%d, begin=%lu, i=%d, end=%lu\n", fac, args->begin, i, args->end);
+    }    
+    return fac;
 }
 
 void *ThreadFactorial(void *args) {
@@ -38,39 +38,46 @@ void *ThreadFactorial(void *args) {
   return (void *)(uint64_t *)Factorial(fargs);
 }
 
-
 int main(int argc, char **argv) {
-  int tnum = -1;
+  uint32_t i;
+  int port = -1;
+
   while (true) {
     int current_optind = optind ? optind : 1;
+
     static struct option options[] = {{"port", required_argument, 0, 0},
-                                      {"tnum", required_argument, 0, 0},
+                                      //{"tnum", required_argument, 0, 0},
                                       {0, 0, 0, 0}};
+
     int option_index = 0;
     int c = getopt_long(argc, argv, "", options, &option_index);
+
     if (c == -1)
       break;
+
     switch (c) {
     case 0: {
       switch (option_index) {
       case 0:
         port = atoi(optarg);
-        if (port < 0) {
-            printf("port is a positive number\n");
+        if (port < 1) {
+            printf("port mast be > 0!\n");
             return -1;
         }
+        // TODO: your code here
         break;
-      case 1:
+/*      case 1:
         tnum = atoi(optarg);
-        if (tnum <= 0) {
-            printf("tnum is a positive number\n");
+        if (tnum < 0) {
+            printf("port mast be > 0!\n");
             return -1;
         }
-        break;
+        break;*/
       default:
         printf("Index %d is out of options\n", option_index);
       }
     } break;
+
     case '?':
       printf("Unknown argument\n");
       break;
@@ -78,34 +85,30 @@ int main(int argc, char **argv) {
       fprintf(stderr, "getopt returned character code 0%o?\n", c);
     }
   }
-  if (port == -1 || tnum == -1) {
-    fprintf(stderr, "Using: %s --port 20001 --tnum 4\n", argv[0]);
+
+  if (port == -1) {
+    fprintf(stderr, "Using: %s --port 20001\n", argv[0]);
     return 1;
   }
 
-  
   int server_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (server_fd < 0) {
     fprintf(stderr, "Can not create server socket!");
     return 1;
   }
 
-  struct sockaddr_in server;
-  server.sin_family = AF_INET;
-  server.sin_port = htons((uint16_t)port);
-  server.sin_addr.s_addr = htonl(INADDR_ANY);
+  struct sockaddr_in server = create_sockaddr((uint16_t)port, htonl(INADDR_ANY));
 
- 
   int opt_val = 1;
   setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt_val, sizeof(opt_val));
-  int err = bind(server_fd, (struct sockaddr *)&server, sizeof(server));
-  if (err < 0) {
-    fprintf(stderr, "Can not bind to socket!");
+
+
+  if (bind(server_fd, (struct sockaddr *)&server, sizeof(server)) < 0) {
+    fprintf(stderr, "Cannot bind to socket\n");
     return 1;
   }
 
-  err = listen(server_fd, 128); 
-  if (err < 0) {
+  if (listen(server_fd, 128) < 0) {
     fprintf(stderr, "Could not listen on socket\n");
     return 1;
   }
@@ -138,8 +141,8 @@ int main(int argc, char **argv) {
         break;
       }
 
-      pthread_t threads[tnum];
-      
+      pthread_t threads;
+
       uint64_t begin = 0;
       uint64_t end = 0;
       uint64_t mod = 0;
@@ -147,37 +150,33 @@ int main(int argc, char **argv) {
       memcpy(&end, from_client + sizeof(uint64_t), sizeof(uint64_t));
       memcpy(&mod, from_client + 2 * sizeof(uint64_t), sizeof(uint64_t));
 
-      fprintf(stdout, "%d receive: %lu %lu %lu\n", port, begin, end, mod);
+      fprintf(stdout, "Receive: begin=%llu, end=%llu, mod=%llu\n", begin, end, mod);
 
-      struct FactorialArgs args[tnum];
-      uint32_t i;
-      for ( i = 0; i < tnum; i++) {
-        args[i].mod = mod;
-        args[i].begin = begin + (end-begin+1)/tnum*i;
-        if (tnum%2==1 && i == (tnum-1))
-            args[i].end = begin + (end-begin+1)/tnum*(i+1) +1;
-        else
-            args[i].end = begin + (end-begin+1)/tnum*(i+1);
-        //fprintf(stdout, "%d %d - %lu %lu\n", port, i, args[i].begin, args[i].end);
-        if (pthread_create(&threads[i], NULL, ThreadFactorial,
-                           (void *)&args[i])) {
+      struct FactorialArgs args;
+
+        args.begin = begin;
+        args.end = end;
+        args.mod = mod;
+
+        if (pthread_create(&threads, NULL, ThreadFactorial,
+                           (void *)&args)) {
           printf("Error: pthread_create failed!\n");
           return 1;
         }
-      }
+
       uint64_t total = 1;
-      for (i = 0; i < tnum; i++) {
+      for (i = 0; i < 1; i++) {
         uint64_t result = 0;
-        pthread_join(threads[i], (void **)&result);
+        pthread_join(threads, (void **)&result);
         total = MultModulo(total, result, mod);
       }
 
-      printf("%d total: %lu\n", port, total);
+      printf("Total: %llu\n", total);
+        
+      char buffer[256];
+      sprintf(buffer, "%d", total);
 
-      char buffer[sizeof(total)];
-      memcpy(buffer, &total, sizeof(total));
-      err = send(client_fd, buffer, sizeof(total), 0);
-      if (err < 0) {
+      if (send(client_fd, buffer, sizeof(total), 0) < 0) {
         fprintf(stderr, "Can't send data to client\n");
         break;
       }
@@ -186,5 +185,6 @@ int main(int argc, char **argv) {
     shutdown(client_fd, SHUT_RDWR);
     close(client_fd);
   }
+
   return 0;
 }

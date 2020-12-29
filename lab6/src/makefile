@@ -1,11 +1,17 @@
 CC=gcc
 CFLAGS=-I.
 
-all : factorial.c server.c client.c
-	gcc -c factorial.c -o factorial.o
-	gcc -shared factorial.o -o libfactorial.so
-	gcc server.c -L. -lfactorial -lpthread -o server
-	gcc client.c -L. -lfactorial -lpthread -o client
+all: server client
+
+server: libs server.c
+	$(CC) server.c -L./ -llib -lpthread -o server.out $(CFLAGS)
+
+client: libs client.c
+	$(CC) client.c -L./ -llib -lpthread -o client.out $(CFLAGS)
+
+libs: lib.c
+	$(CC) -c lib.c -o lib.out
+	ar rcs liblib.a lib.out
 
 clean :
-	rm factorial.o libfactorial.so server client
+	rm client.out server.out
